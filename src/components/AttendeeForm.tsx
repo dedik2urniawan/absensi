@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { absenSchema, type AbsenInput, type Instansi, type Kategori } from "@/lib/schema";
@@ -60,6 +60,7 @@ function Inner({
   setServerErr: (s: string) => void;
   onDone: () => void;
 }) {
+  const isSubmittingRef = useRef(false);
   const {
     register,
     handleSubmit,
@@ -78,6 +79,8 @@ function Inner({
   );
 
   const submit = handleSubmit(async (v) => {
+    if (isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
     setServerErr("");
     try {
       const res = await fetch("/api/absen", {
@@ -86,15 +89,30 @@ function Inner({
         body: JSON.stringify(v),
       });
       const j = await res.json();
-      if (!j.ok) return setServerErr(j.message ?? "Gagal mengirim");
+      if (!j.ok) {
+        isSubmittingRef.current = false;
+        return setServerErr(j.message ?? "Gagal mengirim");
+      }
       onDone();
+      // Tetap true saat sukses agar cegah trailing double-tap saat transisi unmount
     } catch {
+      isSubmittingRef.current = false;
       setServerErr("Koneksi bermasalah. Coba lagi.");
     }
   });
 
   return (
-    <form onSubmit={submit} className="card space-y-5 p-5 sm:p-7" noValidate>
+    <form
+      onSubmit={(e) => {
+        if (isSubmittingRef.current) {
+          e.preventDefault();
+          return;
+        }
+        submit(e);
+      }}
+      className="card space-y-5 p-5 sm:p-7"
+      noValidate
+    >
       <input type="text" tabIndex={-1} autoComplete="off" className="hidden" {...register("website")} />
 
       <div>

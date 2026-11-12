@@ -49,6 +49,8 @@ create table if not exists attendees (
 create index if not exists attendees_created_idx on attendees (created_at desc);
 create index if not exists attendees_kategori_idx on attendees (kategori);
 create index if not exists attendees_sesi_idx on attendees (sesi_id);
+create unique index if not exists attendees_sesi_tel_uniq_idx on attendees (sesi_id, nomor_telepon);
+create index if not exists attendees_nama_idx on attendees (lower(nama_lengkap));
 
 create table if not exists admins (
   email text primary key

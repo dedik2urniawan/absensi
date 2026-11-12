@@ -1,5 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
+import { unstable_cache } from "next/cache";
 import { createClient } from "@supabase/supabase-js";
 import AttendeeForm from "@/components/AttendeeForm";
 import { sesiStatus, sesiTerbuka, formatWIB, STATUS_LABEL, type Sesi } from "@/lib/sesi";
@@ -8,16 +9,48 @@ import type { Instansi, Kategori } from "@/lib/schema";
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Absensi Peserta — HKN ke-62" };
 
+let anonClient: ReturnType<typeof createClient> | null = null;
+function getAnonClient() {
+  if (!anonClient) {
+    anonClient = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      { auth: { persistSession: false } }
+    );
+  }
+  return anonClient;
+}
+
+/** Cache static master data (instansi & kategori) selama 300 detik (5 menit) */
+const getCachedMasterData = unstable_cache(
+  async () => {
+    const sb = getAnonClient();
+    const [{ data: kategori, error: errKat }, { data: instansi, error: errInst }] = await Promise.all([
+      sb.from("instansi_kategori").select("*").order("urut"),
+      sb.from("instansi").select("id,kategori,nama").order("nama").limit(2000),
+    ]);
+    if (errKat || errInst) {
+      throw new Error(`Master data fetch failed: ${errKat?.message || errInst?.message}`);
+    }
+    return {
+      kategori: (kategori ?? []) as Kategori[],
+      instansi: (instansi ?? []) as Instansi[],
+    };
+  },
+  ["absen-master-data"],
+  { revalidate: 300, tags: ["master-data"] }
+);
+
 export default async function AbsenPage() {
-  // Data referensi dibaca dengan anon key (dilindungi RLS read-only)
-  const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, {
-    auth: { persistSession: false },
-  });
-  const [{ data: kategori }, { data: instansi }, { data: sesi }] = await Promise.all([
-    sb.from("instansi_kategori").select("*").order("urut"),
-    sb.from("instansi").select("id,kategori,nama").order("nama").limit(2000),
+  const sb = getAnonClient();
+  const [masterData, { data: sesi }] = await Promise.all([
+    getCachedMasterData().catch((err) => {
+      console.error("Gagal membaca cache master data:", err);
+      return { kategori: [] as Kategori[], instansi: [] as Instansi[] };
+    }),
     sb.from("sesi").select("*").order("mulai"),
   ]);
+  const { kategori, instansi } = masterData;
   const list = (sesi ?? []) as Sesi[];
   const buka = sesiTerbuka(list);
   const next = list.find((s) => sesiStatus(s) === "belum");
@@ -44,7 +77,7 @@ export default async function AbsenPage() {
               <p className="mb-3 rounded-xl bg-white/90 px-4 py-2 text-sm font-medium text-brand-800">
                 🟢 {buka.nama} sedang dibuka
               </p>
-              <AttendeeForm kategori={(kategori ?? []) as Kategori[]} instansi={(instansi ?? []) as Instansi[]} />
+              <AttendeeForm kategori={kategori} instansi={instansi} />
             </>
           ) : (
             <div className="card p-8 text-center">
